@@ -3,7 +3,7 @@
 
 # - Backtestting
 # - Yilin Sun
-# - last updated 2019-04-29
+# - last updated 2019-05-08
 # 
 # #### Four period
 # - 2018-04-10 to 2018-04-30
@@ -11,7 +11,7 @@
 # - 2018-10-15 to 2018-11-02
 # - 2019-01-16 to 2019-02-05
 
-# In[1]:
+# In[5]:
 
 
 import numpy as np
@@ -26,7 +26,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-# In[2]:
+# In[6]:
 
 
 # read data
@@ -47,7 +47,14 @@ curve['yr5'] = (1 - np.exp(- (1/shortterm) * ytm))/ytm
 curve['yr10'] = (1 - np.exp(- (1/longterm) * ytm))/ytm
 
 
-# In[3]:
+# In[7]:
+
+
+# for sub sector data
+curve = curve[curve.BCLASS3.isin(['Banking', 'Capital Goods', 'Natural Gas'])]
+
+
+# In[8]:
 
 
 ### Step 1: Define G-spread Filtering
@@ -97,7 +104,7 @@ def GSpdFiltering(input_date, curve):
     return richbonds, cheapbonds
 
 
-# In[4]:
+# In[9]:
 
 
 ### Step 2: Define Issuer Curve Filtering
@@ -176,7 +183,7 @@ def issuerCurve(input_date, curve):
     return result, richbonds, cheapbonds 
 
 
-# In[5]:
+# In[10]:
 
 
 ### Step 3: Define Sector Curve Filtering
@@ -267,7 +274,7 @@ def sectorCurve(input_date, curve):
     return result, richbonds, cheapbonds
 
 
-# In[6]:
+# In[11]:
 
 
 ### Step 4: Define Merge Results
@@ -300,7 +307,7 @@ def merge_result(spd, iss, sec, curve):
     return output
 
 
-# In[7]:
+# In[12]:
 
 
 ### Step 5: Define function - Merge Results from Three Filters
@@ -323,24 +330,48 @@ def rich_cheap(input_date, curve):
     return richbonds, cheapbonds
 
 
-# #### test: Filters defined. now get the results...
+# ### Get Rich and Cheap predictions from long-short term 
 
-# In[8]:
-
-
-"""
-%%time
-
-# test recommendations on one day - need 12~13min/day
-input_date = '2019-03-07'
-testrich, testcheap = rich_cheap(input_date, curve)
-"""
+# In[26]:
 
 
-# ### Calculate one-week return for each bond
+dates = sorted(set(curve.date))
+bt_dates = dates[dates.index('2018-10-26'):(dates.index('2018-11-02')+1)]
+
+
+# In[27]:
+
+
+get_ipython().run_cell_magic('time', '', "# test recommendations on one day - need 12~13min/day\n\nrich_recomm = pd.DataFrame(columns=['ISIN', 'date', 'ranking'])\ncheap_recomm = pd.DataFrame(columns=['ISIN', 'date', 'ranking'])\n\nfor input_date in bt_dates:\n    richbonds, cheapbonds = rich_cheap(input_date, curve)\n    richbonds['date'] = input_date\n    cheapbonds['date'] = input_date\n    rich_recomm = rich_recomm.append(richbonds[['ISIN', 'date', 'ranking']])\n    cheap_recomm = cheap_recomm.append(cheapbonds[['ISIN', 'date', 'ranking']])\n    \nrich_recomm.to_csv('p3_ls_rich.csv')\ncheap_recomm.to_csv('p3_ls_cheap.csv')")
+
+
+# In[28]:
+
+
+a1 = pd.read_csv('p1_ls_rich.csv')
+a2 = pd.read_csv('p2_ls_rich.csv')
+a3 = pd.read_csv('p3_ls_rich.csv')
+
+
+# In[30]:
+
+
+inte = a1.append(a2)
+inte2 = inte.append(a3)
+inte2 = inte2[['ISIN','date','ranking']]
+inte2.to_csv('all_period_longshort.csv')
+
+
+# In[31]:
+
+
+inte2.shape
+
+
+# ## Backtest Steps:  Calculate one-week return for each bond
 # - Assuming one-week (5 trade days) holding period..
 
-# In[9]:
+# In[ ]:
 
 
 ### Step 6: Define One_week_returns for all bonds if buy on this day
@@ -369,20 +400,22 @@ def weekly_returns_on_a_day(start_date, curve):
     return output
 
 
-# In[10]:
+# In[ ]:
 
 
 ### Part 7: Define function to get performance(in terms of percentiles on one-week-returns) of recommended bonds
 def get_percentile(isin, returns):
     
-    # return of this bond
-    isin_return = returns.one_week_returns[returns.ISIN==isin].values[0]
-    
+    # initialization
     sector_rating_perc = -1
     issuer_perc = -1
     
-    if not pd.isna(isin_return):
+    # begin if this ISIN is in returns (exist for the next 5 days)
+    if isin in set(returns.ISIN):
         
+        # return of this bond
+        isin_return = returns.one_week_returns[returns.ISIN==isin].values[0]
+
         # sector rating-wise percentiel
         sector = returns.BCLASS3[returns.ISIN==isin].values[0]
         rating = returns.SPRatingNum[returns.ISIN==isin].values[0]
@@ -399,31 +432,15 @@ def get_percentile(isin, returns):
     return sector_rating_perc, issuer_perc
 
 
-# ### Test for one day
-# - 2018-04-10 to 2018-04-16
+# ## Backtest Begins...
 
-# In[34]:
-
-
-get_ipython().run_cell_magic('time', '', "\ndatestr = '2018-04-12'\n\n# find start and end dates\nsorted_dates = curve.date.drop_duplicates().reset_index(drop=True).values\nind1 = np.where(sorted_dates==datestr)[0][0]\nind2 = np.where(sorted_dates==datestr)[0][0]\ntest_period_dates = sorted_dates[ind1:(ind2+1)]\n\n# save final outputs include rich/cheap ISINs, ranking scores, performance percentile\ncolnames = ['ISIN', 'spd', 'iss', 'sec', 'ranking', 'BCLASS3', 'Ticker', 'sector_percentile','issuer_percentile']\nrich_recomm = pd.DataFrame(columns=colnames)\ncheap_recomm = pd.DataFrame(columns=colnames)\n\n# start backtesting\nfor start_date in test_period_dates:\n    \n    print(start_date)\n    \n    # get rich and cheap bonds for this day\n    richb, cheapb = rich_cheap(start_date, curve)\n    \n    # get all bond one-week-returns if buy on this day\n    returns = weekly_returns_on_a_day(start_date, curve)\n    \n    # add two columns to save percentiles\n    richb['sector_percentile'] = -1\n    richb['issuer_percentile'] = -1\n    cheapb['sector_percentile'] = -1\n    cheapb['issuer_percentile'] = -1\n    \n    # for each bond, its return level among the same sector_rating or same issuer (percentile)\n    rich_sector_percentile = []\n    rich_issuer_percentile = []\n    for row, isin in enumerate(richb.ISIN):\n        sec_perc, iss_perc = get_percentile(isin, returns)\n        rich_sector_percentile.append(sec_perc)\n        rich_issuer_percentile.append(iss_perc)\n    richb['sector_percentile'] = rich_sector_percentile\n    richb['issuer_percentile'] = rich_issuer_percentile\n    \n    cheap_sector_percentile = []\n    cheap_issuer_percentile = []\n    for row, isin in enumerate(cheapb.ISIN):\n        sec_perc, iss_perc = get_percentile(isin, returns)\n        cheap_sector_percentile.append(sec_perc)\n        cheap_issuer_percentile.append(iss_perc)\n    cheapb['sector_percentile'] = cheap_sector_percentile\n    cheapb['issuer_percentile'] = cheap_issuer_percentile \n    \n    # append this one day's results to master dataframe\n    rich_recomm = rich_recomm.append(richb, ignore_index=True)\n    cheap_recomm = cheap_recomm.append(cheapb, ignore_index=True)")
-
-
-# In[35]:
-
-
-rich_recomm.to_csv('{}_bt_rich.csv'.format(datestr))
-cheap_recomm.to_csv('{}_bt_cheap.csv'.format(datestr))
-
-
-# ## Loop Backtest
-
-# In[52]:
+# In[ ]:
 
 
 dates = ['2018-04-25', '2018-04-26', '2018-04-27', '2018-04-30']
 
 
-# In[53]:
+# In[ ]:
 
 
 for datestr in dates:
@@ -478,30 +495,27 @@ for datestr in dates:
         rich_recomm = rich_recomm.append(richb, ignore_index=True)
         cheap_recomm = cheap_recomm.append(cheapb, ignore_index=True)
 
-    rich_recomm.to_csv('{}_bt_rich.csv'.format(datestr))
-    cheap_recomm.to_csv('{}_bt_cheap.csv'.format(datestr))
+    rich_recomm.to_csv('{}_ls_rich.csv'.format(datestr))
+    cheap_recomm.to_csv('{}_ls_cheap.csv'.format(datestr))
 
 
-# #### Analyze results..
+# ### Analyze/Visualize results..
 
-# In[137]:
+# In[ ]:
 
 
 dates = ['2018-04-11', '2018-04-12', '2018-04-13', '2018-04-16', '2018-04-17', 
          '2018-04-18','2018-04-19', '2018-04-20','2018-04-23']
 
 
-# In[138]:
+# In[ ]:
 
 
+# read predictions for 1st day
 rich = pd.read_csv('2018-04-10_bt_rich.csv')
 cheap = pd.read_csv('2018-04-10_bt_cheap.csv')
-rich.shape
 
-
-# In[139]:
-
-
+# read data from predictions
 for datestr in dates:
     f = pd.read_csv('{}_bt_rich.csv'.format(datestr))
     rich = rich.append(f)
@@ -510,15 +524,13 @@ for datestr in dates:
     cheap = cheap.append(f1)
 
 
-# In[140]:
+# In[ ]:
 
 
-# prediction by sector
-#r = rich_recomm
-r = rich
-r_bysec = r[['BCLASS3','sector_percentile']] 
+# prediction by sector - rich
+r_bysec = rich[['BCLASS3','sector_percentile']] 
 
-fig, ax = plt.subplots(figsize=(16,5))
+fig, ax = plt.subplots(figsize=(16,6))
 plt.suptitle('')
 r_bysec.boxplot(by='BCLASS3', ax=ax)
 plt.title('Rank of One-Week Returns of Predicted Rich Bonds', fontsize=16)
@@ -526,11 +538,7 @@ plt.xlabel('Sectors', fontsize=16)
 plt.xticks(rotation = 45)
 plt.show()
 
-
-# In[141]:
-
-
-# prediction by issuer
+# prediction by issuer - rich
 r_byiss = r.groupby(by='Ticker').median().reset_index()[['Ticker','issuer_percentile']]
 r_byiss = r_byiss.sort_values(by='issuer_percentile').loc[r_byiss.issuer_percentile>0]
 
@@ -542,15 +550,13 @@ plt.xlabel('Individual Issuers: %d issuers in total'%r_byiss.shape[0], fontsize=
 plt.show()
 
 
-# In[142]:
+# In[ ]:
 
 
-# prediction by sector
-#c = cheap_recomm
-c = cheap
-c_bysec = c[['BCLASS3','sector_percentile']] 
+# prediction by sector - cheap
+c_bysec = cheap[['BCLASS3','sector_percentile']] 
 
-fig, ax = plt.subplots(figsize=(16,5))
+fig, ax = plt.subplots(figsize=(16,6))
 plt.suptitle('')
 c_bysec.boxplot(by='BCLASS3', ax=ax)
 plt.title('Rank of One-Week Returns of Predicted Cheap Bonds', fontsize=16)
@@ -558,11 +564,7 @@ plt.xlabel('Sectors', fontsize=16)
 plt.xticks(rotation = 45)
 plt.show()
 
-
-# In[143]:
-
-
-# prediction by issuer
+# prediction by issuer - cheap
 c_byiss = c.groupby(by='Ticker').median().reset_index()[['Ticker','issuer_percentile']]
 c_byiss = c_byiss.sort_values(by='issuer_percentile').loc[c_byiss.issuer_percentile>0]
 
@@ -572,27 +574,3 @@ plt.axhline(y=0.5, linestyle='--', color='grey')
 plt.title('Mean Performance of Predicted Cheap Bonds by Issuer', fontsize=14)
 plt.xlabel('Individual Issuers: %d issuers in total'%c_byiss.shape[0], fontsize=14)
 plt.show()
-
-
-# In[129]:
-
-
-"""
-### save outputs
-
-# save G-Spread outputs
-gspd = pd.concat([rich_spd, cheap_spd], axis=1)
-gspd.columns=['rich', 'cheap']
-gspd.to_csv('elin_spd.csv')
-
-# save Issuer Curve outputs
-iss = pd.concat([rich_iss, cheap_iss], axis=1)
-iss.columns=['rich', 'cheap']
-iss.to_csv('elin_issuerCurve.csv')
-
-# save Sector Curve outputs
-sec = pd.concat([rich_sec, cheap_sec], axis=1)
-sec.columns=['rich', 'cheap']
-sec.to_csv('elin_sectorCurve.csv')
-"""
-
